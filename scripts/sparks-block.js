@@ -5,17 +5,22 @@ const Patches = require('Patches');
 // Use export keyword to make a symbol available in scripting debug console
 export const Diagnostics = require('Diagnostics');
 
-let bouncerCount = 4;
+const positionScale = -1000;
+const bouncerCount = 4;
+let barPosition = {x: 0, y: 0, _y: 0};
 let bouncers = [];
 let speeds = [];
 let angles = [];
 let lastBounceList = [];
+let hits = [];
+let saves = 0;
 
 for(let i = 0; i < bouncerCount; i++){
     lastBounceList.push(-1);
     bouncers.push({x: getRandomX(), y: 0});
     angles.push(getRandomAngle());
     speeds.push(getRandomSpeed());
+    hits.push({x: false, y: false, saveStopper: -10});
 }
 
 const maxCycles = 300;
@@ -49,26 +54,28 @@ Scene.root.findFirst('sizer').then(function (r) {
         Patches.inputs.setScalar('vertical_center', canvasBounds.height.mul(.5));
         const barWidthRatio = .2;
         Patches.inputs.setScalar('bar_width', canvasBounds.width.mul(barWidthRatio));
-        Patches.inputs.setScalar('bar_height', canvasBounds.width.mul(.1));
+        Patches.inputs.setScalar('bar_height', canvasBounds.width.mul(barWidthRatio/2));
         Patches.inputs.setScalar('bouncer_width', canvasBounds.width.mul(.05));
         Patches.inputs.setScalar('bouncer_height', canvasBounds.width.mul(.05));
         Patches.inputs.setScalar('offset', canvasBounds.width.mul(barWidthRatio/-2));
         Scene.root.findFirst('positionTracker').then(function (result) {
             result.worldTransform.position.x.monitor().subscribe(function (value) {
                 const barLeft = value.newValue;
-                Patches.inputs.setScalar('bar_left', barLeft * -1000); 
+                barPosition.x = (barLeft * positionScale) + (gameWidth / 2) - ((gameWidth * barWidthRatio) / 2);
+                Patches.inputs.setScalar('bar_left', barLeft * positionScale); 
             });
         });
         
         Scene.root.findFirst('verticalTracker').then(function (result) {
             result.worldTransform.position.y.monitor().subscribe(function (value) {
                 const barTop = value.newValue;
-                Patches.inputs.setScalar('bar_top', barTop * -1000);
+                barPosition._y = (barTop * positionScale);
+                Patches.inputs.setScalar('bar_top', barPosition._y);
             });
         });
         Scene.root.findFirst('timeTracker').then(function (result) {
             result.worldTransform.rotation.x.monitor().subscribe(function (value) {
-               tick(value, maxCycles); 
+                tick(value, maxCycles); 
             });
         });
         for(let index = 0; index < bouncers.length; index++)
@@ -82,6 +89,8 @@ Scene.root.findFirst('sizer').then(function (r) {
                     else if(value.newValue > gameWidth){
                         bounce(bounceTypes.RIGHT, index);
                     }
+                    const barWidth = gameWidth * barWidthRatio;
+                    hits[index].x = value.newValue > barPosition.x && value.newValue < barPosition.x + barWidth;
                 });
             });
             Scene.root.findFirst(`bouncer_${index}`).then((result) => {
@@ -92,6 +101,10 @@ Scene.root.findFirst('sizer').then(function (r) {
                     else if(value.newValue > gameHeight){
                         bounce(bounceTypes.BOTTOM, index);
                     }
+                    const barHeight = gameHeight * (barWidthRatio / 2);
+                    barPosition.y = gameHeight * .7;
+                    // Diagnostics.log(barPosition.y);
+                    hits[index].y = value.newValue > barPosition.y && value.newValue < barPosition.y + barHeight;
                 });
             });
         }
@@ -109,7 +122,17 @@ function tick(value, cycleMax){
             
             Patches.inputs.setScalar(`bouncer_left_${index}`, bouncers[index].x);
             Patches.inputs.setScalar(`bouncer_top_${index}`, bouncers[index].y);
-        } 
+        }
+        if(hits[index].x && hits[index].y){
+            
+            if(hits[index].saveStopper > 1){
+                saves++;
+                hits[index].saveStopper = -2;
+                Diagnostics.log(saves);
+            }
+            resetBouncer(index);
+        }
+        hits[index].saveStopper++;
         cycleCount++;
     }
 }
@@ -117,14 +140,14 @@ function tick(value, cycleMax){
 function bounce(type, index){
     if(type != lastBounceList[index]){
         lastBounceList[index] = type;
-        Diagnostics.log((angles[index] + 360) % 360);
+        // Diagnostics.log((angles[index] + 360) % 360);
         const plottedNext = {x: getOrbit(bouncers[index].x, speeds[index], angles[index], 'cos'), y: getOrbit(bouncers[index].y, speeds[index], angles[index], 'sin')};
         switch(type){
             case bounceTypes.LEFT:{
                 const xDistToLast = (bouncers[index].x - plottedNext.x) * 2;
                 const angledNext = {x: plottedNext.x + xDistToLast, y: plottedNext.y};
                 angles[index] = getAngle(bouncers[index].x, bouncers[index].y, angledNext.x, angledNext.y);
-                Diagnostics.log('LEFT');
+                // Diagnostics.log('LEFT');
                 break;
             }
             case bounceTypes.RIGHT:{
@@ -132,7 +155,7 @@ function bounce(type, index){
                 const angledNext = {x: plottedNext.x - xDistToLast, y: plottedNext.y};
                 angles[index] = getAngle(bouncers[index].x, bouncers[index].y, angledNext.x, angledNext.y);
                 
-                Diagnostics.log('RIGHT');
+                // Diagnostics.log('RIGHT');
                 break;
             }
             // case bounceTypes.TOP:{
@@ -143,10 +166,7 @@ function bounce(type, index){
             //     break;
             // }
             case bounceTypes.BOTTOM:{
-                bouncers[index] = {x: getRandomX(), y: -1};
-                angles[index] = getRandomAngle();
-                speeds[index] = getRandomSpeed();
-                lastBounceList[index] = -1;
+                resetBouncer(index);
                 // const yDistToLast = (plottedNext.y - bouncers[index].y) * 2;
                 // const angledNext = {x: plottedNext.x, y: plottedNext.y - yDistToLast};
                 // angles[index] = getAngle(bouncers[index].x, bouncers[index].y, angledNext.x, angledNext.y);
@@ -156,6 +176,13 @@ function bounce(type, index){
         }
     }
     
+}
+
+function resetBouncer(index){
+    bouncers[index] = {x: getRandomX(), y: -1};
+    angles[index] = getRandomAngle();
+    speeds[index] = getRandomSpeed();
+    lastBounceList[index] = -1;
 }
 
 function getRandomX(){
