@@ -179,7 +179,7 @@ function bounce(type, index){
 }
 
 function resetBouncer(index){
-    bouncers[index] = {x: getRandomX(), y: -1};
+    bouncers[index] = {x: getRandomX(), y: Math.random() * (gameHeight * -1)};
     angles[index] = getRandomAngle();
     speeds[index] = getRandomSpeed();
     lastBounceList[index] = -1;
